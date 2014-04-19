@@ -1,0 +1,6 @@
+msgpack/CMakeCache.txt
+msgpack/CMakeFiles/*
+msgpack/CMakeLists.txt
+msgpack/Makefile
+msgpack/cmake_install.cmake
+msgpack/msgpack.so
