@@ -1,14 +1,19 @@
 #include "hphp/runtime/base/base-includes.h"
 #include "hphp/runtime/ext/extension.h"
 #include "hphp/runtime/base/complex-types.h"
+#include "hphp/runtime/base/variable-serializer.h"
+#include "hphp/runtime/base/variable-unserializer.h"
 
 #include <msgpack.hpp>
-#include <iostream>
+
+#define MSGPACK_CONTENT_TYPE_OBJECT 1
+#define MSGPACK_CONTENT_TYPE_ARRAY 2
 
 namespace HPHP {
 
 	String php_msgpack_serial_recursive(const Variant& data);
-	bool is_need_recursive(const std::string& data);
+	String php_msgpack_serial_object(const Variant& data);
+	Variant php_msgpack_unserialize_recursive(const msgpack::object& obj);
 
 	class MsgpackException : public std::exception
 	{
@@ -50,8 +55,7 @@ namespace HPHP {
 		}
 		else if (data.isObject())
 		{
-			/* code */
-			return "";
+			return php_msgpack_serial_object(data);
 		}
 		else if (data.isNull())
 		{
@@ -71,6 +75,22 @@ namespace HPHP {
 			throw MsgpackException("unknown data type");
 		}
 		return "123";
+	}
+
+	String php_msgpack_serial_object(const Variant& data)
+	{
+		VariableSerializer vs(VariableSerializer::Type::Serialize);
+		String str = vs.serialize(data, true);
+		std::string s = str.toCppString();
+
+		msgpack::sbuffer sbuf;
+        msgpack::packer<msgpack::sbuffer> pk(&sbuf);
+        pk.pack_map(1);
+
+        pk.pack(MSGPACK_CONTENT_TYPE_OBJECT);
+        pk.pack(s);
+
+		return String(sbuf.data(), sbuf.size(), CopyString);
 	}
 
 	String php_msgpack_serial_recursive(const Variant& data)
@@ -119,6 +139,11 @@ namespace HPHP {
 				int v_int = v.toInt32();
 				pk.pack(v_int);
 			}
+			else if (v.isObject())
+			{
+				String s = php_msgpack_serial_object(v);
+				pk.pack(s.toCppString());
+			}
 			else if(v.isNull()){
 				msgpack::type::nil v;
 				pk.pack(v);
@@ -128,14 +153,21 @@ namespace HPHP {
 			}
 		}
 
-		return String(sbuf.data(), sbuf.size(), CopyString);
+		std::string inner(sbuf.data(), sbuf.size());
+
+		msgpack::sbuffer sbufType;
+        msgpack::packer<msgpack::sbuffer> pkType(&sbufType);
+        pkType.pack_map(1);
+
+        pkType.pack(MSGPACK_CONTENT_TYPE_ARRAY);
+        pkType.pack(inner);
+
+		return String(sbufType.data(), sbufType.size(), CopyString);
 	}
 
 	Variant php_msgpack_unserialize(const String& data)
 	{
-		msgpack::sbuffer sbuf;
 		msgpack::unpacked msg;
-
 		msgpack::unpack(&msg, data.c_str(), data.length());
 		msgpack::object obj = msg.get();
 
@@ -177,108 +209,144 @@ namespace HPHP {
 			break;
 			case msgpack::type::object_type::MAP:
 			{
-				Array a;
-				msgpack::object_kv* pkv;
-				msgpack::object_kv* pkv_end;
-				msgpack::object pk, pv;
-				if(obj.via.map.size > 0)
-				{
-					pkv = obj.via.map.ptr;
-					pkv_end = obj.via.map.ptr + obj.via.map.size;
-
-					do
-					{
-					 pk = pkv->key;
-					 pv = pkv->val;
-
-					 Variant k;
-					 Variant v;
-					 
-					 if (pk.type == msgpack::type::object_type::RAW)
-					 {
-					 	std::string key;
-					 	pk >> key;
-					 	k = key;
-					 }
-					 else
-					 {
-					 	int key;
-					 	pk >> key;
-					 	k = key;
-					 }
-
-					 switch(pv.type){
-				 	case msgpack::type::object_type::RAW:
-					{
-						std::string s;
-						pv >> s;
-						if (is_need_recursive(s))
-					 	{
-					 		v = php_msgpack_unserialize(String(s));
-					 	}
-					 	else
-					 	{
-					 		v = String(s);
-					 	}
-					}
-					break;
-				 	case msgpack::type::object_type::BOOLEAN:
-					{
-						bool b;
-						pv >> b;
-						v = b;
-					}
-					break;
-					case msgpack::type::object_type::DOUBLE:
-					{
-						double d;
-						pv >> d;
-						v = d;
-					}
-					break;
-					case msgpack::type::object_type::POSITIVE_INTEGER:
-					case msgpack::type::object_type::NEGATIVE_INTEGER:
-					{
-						int i;
-						pv >> i;
-						v = i;
-					}
-					break;
-					case msgpack::type::object_type::NIL:
-					{
-						v = init_null_variant;
-					}
-					break;
-					default:
-					 break;
-					}
-
-					a.add(k, v);
-
-					 ++pkv;
-					}
-					while (pkv < pkv_end);
-				}
-				return a;
+				return php_msgpack_unserialize_recursive(obj);
 			}
 			break;
 			default:
-				return "";
+				return Variant();
 				break;
 		}
 
-		return "123";
+		return Variant();
 	}
 
-	bool is_need_recursive(const std::string& data)
+	Variant php_msgpack_unserialize_recursive(const msgpack::object& obj)
 	{
-		msgpack::sbuffer sbuf;
-		msgpack::unpacked msg;
+		msgpack::object_kv* typeEle;
+		msgpack::object typeKey, typeVal;
+		if (obj.via.map.size > 0)
+		{
+			typeEle = obj.via.map.ptr;
+			typeKey = typeEle->key;
+			typeVal = typeEle->val;
+			int type;
+			typeKey >> type;
 
-		msgpack::unpack(&msg, data.c_str(), data.length());
-		msgpack::object obj = msg.get();
+			std::string val;
+		 	typeVal >> val;
 
-		return obj.type == msgpack::type::object_type::MAP;
+			switch(type){
+				case MSGPACK_CONTENT_TYPE_OBJECT:
+				{
+					VariableUnserializer vus(val.c_str(), val.length(), VariableUnserializer::Type::Serialize);
+					return vus.unserialize();
+				}
+				break;
+				case MSGPACK_CONTENT_TYPE_ARRAY:
+				{
+					msgpack::unpacked msg;
+
+					msgpack::unpack(&msg, val.c_str(), val.length());
+					msgpack::object obj = msg.get();
+
+					Array a;
+					msgpack::object_kv* pkv;
+					msgpack::object_kv* pkv_end;
+					msgpack::object pk, pv;
+					if(obj.via.map.size > 0)
+					{
+						pkv = obj.via.map.ptr;
+						pkv_end = obj.via.map.ptr + obj.via.map.size;
+
+						do
+						{
+							pk = pkv->key;
+							pv = pkv->val;
+
+							Variant k;
+							Variant v;
+
+							if (pk.type == msgpack::type::object_type::RAW)
+							{
+								std::string key;
+								pk >> key;
+								k = key;
+							}
+							else
+							{
+								int key;
+								pk >> key;
+								k = key;
+							}
+
+							switch(pv.type){
+								case msgpack::type::object_type::RAW:
+								{
+									std::string s;
+									pv >> s;
+
+									//need rebuild msgpack object to detect type
+									msgpack::unpacked msg;
+									msgpack::unpack(&msg, s.c_str(), s.length());
+									msgpack::object obj = msg.get();
+									if (obj.type == msgpack::type::object_type::MAP)
+									{
+										v = php_msgpack_unserialize_recursive(obj);
+									}else {
+										v = String(s);
+									}
+								}
+								break;
+								case msgpack::type::object_type::BOOLEAN:
+								{
+									bool b;
+									pv >> b;
+									v = b;
+								}
+								break;
+								case msgpack::type::object_type::DOUBLE:
+								{
+									double d;
+									pv >> d;
+									v = d;
+								}
+								break;
+								case msgpack::type::object_type::POSITIVE_INTEGER:
+								case msgpack::type::object_type::NEGATIVE_INTEGER:
+								{
+									int i;
+									pv >> i;
+									v = i;
+								}
+								break;
+								case msgpack::type::object_type::NIL:
+								{
+									v = init_null_variant;
+								}
+								break;
+								case msgpack::type::object_type::MAP:
+								{
+									v = php_msgpack_unserialize_recursive(pv);
+								}
+								break;
+								default:
+								 	break;
+							}
+
+							a.add(k, v);
+
+							++pkv;
+						}while (pkv < pkv_end);
+
+						return a;
+					}
+				}
+				break;
+				default:
+				break;
+			}
+		}
+		return Variant();
 	}
 
 	static String HHVM_FUNCTION(msgpack_serialize, const Variant& data)
