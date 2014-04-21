@@ -1,78 +1,87 @@
 <?php
 
-$str = null;
-var_dump($str);
-$packId = msgpack_pack($str);
-var_dump($packId);
-var_dump(msgpack_unpack($packId));
+class Person
+{
+	private $name;
+	private $brothers;
 
-$str = 1.23;
-var_dump($str);
-$packId = msgpack_pack($str);
-var_dump($packId);
-var_dump(msgpack_unpack($packId));
-
-$str = true;
-var_dump($str);
-$packId = msgpack_pack($str);
-var_dump($packId);
-var_dump(msgpack_unpack($packId));
-
-$str = 'hello';
-var_dump($str);
-$packId = msgpack_pack($str);
-var_dump($packId);
-var_dump(msgpack_unpack($packId));
-
-$str = array(
-		'a' => 1,
-		'b' => 2,
-		'c' => array(
-			'c1' => 1,
-			'c2' => 2,
-			'c3' => array(
-				'c31' => 1,
-			),
-		),
-		'd' => 3,
-	);
-var_dump($str);
-$packId = msgpack_pack($str);
-var_dump($packId);
-var_dump(msgpack_unpack($packId));
-
-class Person{
-	private $a;
-
-	public function getA(){
-		return $this->a;
+	function __construct($name)
+	{
+		$this->name = $name;
 	}
 
-	public function setA(){
-		$this->a = "a";
+	function getName()
+	{
+		return $this->name;
+	}
+
+	function setBrothers($brothers)
+	{
+		$this->brothers = $brothers;
+	}
+
+	function getBrothers()
+	{
+		return $this->brothers;
 	}
 }
-$p = new Person();
-var_dump($p);
-$p->setA();
-$packId = msgpack_pack($p);
-var_dump($packId);
+
+$a = null;
+$packId = msgpack_pack($a);
 $b = msgpack_unpack($packId);
-var_dump($b->getA());
+var_dump($a == $b);
+
+$a = 1.25;
+$packId = msgpack_pack($a);
+$b = msgpack_unpack($packId);
+var_dump($a == $b);
+
+$a = 123;
+$packId = msgpack_pack($a);
+$b = msgpack_unpack($packId);
+var_dump($a == $b);
+
+$a = 'hello world';
+$packId = msgpack_pack($a);
+$b = msgpack_unpack($packId);
+var_dump($a == $b);
+
+$a = array('a' => 1, 'b' => 2);
+$packId = msgpack_pack($a);
+$b = msgpack_unpack($packId);
+var_dump($a == $b);
 
 $a = array(
 	'a' => 1,
-	'b' => $p,
-	'c' => array(
-		'c1' => 1,
-		'c2' => $p,
-		'c3' => array(
-			'c31' => 1,
-		),
+	'b' => array(
+		'c' => 2,
 	),
-	'd' => 3,
+	'd' => 3
 );
-var_dump($a);
 $packId = msgpack_pack($a);
-var_dump($packId);
-var_dump(msgpack_unpack($packId));
+$b = msgpack_unpack($packId);
+var_dump($a == $b);
+
+$a = new Person('Jim');
+$packId = msgpack_pack($a);
+$b = msgpack_unpack($packId);
+var_dump($a->getName() == $b->getName());
+
+$p = new Person('Jim');
+$a = array(
+	'a' => $p,
+	'b' => array(
+		'c' => 2,
+	),
+	'd' => 3
+);
+$packId = msgpack_pack($a);
+$b = msgpack_unpack($packId);
+var_dump($a['a']->getName() == $b['a']->getName());
+
+$brothers = array('Mike', 'Perter');
+$p = new Person('Jim');
+$p->setBrothers($brothers);
+$packId = msgpack_pack($p);
+$b = msgpack_unpack($packId);
+var_dump(in_array('Mike', $b->getBrothers()) && in_array('Perter', $b->getBrothers()));
